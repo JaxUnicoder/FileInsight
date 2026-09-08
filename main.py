@@ -1,5 +1,6 @@
 from pathlib import Path
 from shutil import copy2
+import matplotlib.pyplot as plt
 
 
 rules = {
@@ -83,15 +84,38 @@ if folder.exists() and folder.is_dir():
 
     print("\nStatistics:")
 
+    print("\n" + "=" * 40)
+    print("FileInsight Statistics")
+    print("=" * 40)
+
+    print(f"{'Category':<10} {'Files':>8} {'Size(MB)':>12}")
+    print("-" * 40)
+
     for category, data in stats.items():
+        size_mb = data["size"] / (1024 * 1024)
+
         print(
-            f"{category}: "
-            f"{data['count']} files, "
-            f"{data['size']} bytes"
+            f"{category:<10} "
+            f"{data['count']:>8} "
+            f"{size_mb:>12.2f}"
         )
 
-    print("\nDone! Organized files saved to:")
-    print(output_root)
+    print("=" * 40)
+
+    categories = []
+    sizes_mb = []
+
+    for category, data in stats.items():
+        categories.append(category)
+        sizes_mb.append(data["size"] / (1024 * 1024))
+
+    plt.bar(categories, sizes_mb)
+
+    plt.title("File Size by Category")
+    plt.xlabel("Category")
+    plt.ylabel("Size (MB)")
+
+    plt.show()
 
 else:
     print("Invalid folder path.")
