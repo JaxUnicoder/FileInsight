@@ -32,6 +32,19 @@ def get_unique_path(target_dir, file_name):
         index += 1
 
 
+def format_size(size_bytes):
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+
+    if size_bytes < 1024 ** 2:
+        return f"{size_bytes / 1024:.2f} KB"
+
+    if size_bytes < 1024 ** 3:
+        return f"{size_bytes / (1024 ** 2):.2f} MB"
+
+    return f"{size_bytes / (1024 ** 3):.2f} GB"
+
+
 folder_path = input("Enter folder path: ")
 folder = Path(folder_path)
 
@@ -88,16 +101,16 @@ if folder.exists() and folder.is_dir():
     print("FileInsight Statistics")
     print("=" * 40)
 
-    print(f"{'Category':<10} {'Files':>8} {'Size(MB)':>12}")
+    print(f"{'Category':<10} {'Files':>8} {'Size':>12}")
     print("-" * 40)
 
     for category, data in stats.items():
-        size_mb = data["size"] / (1024 * 1024)
+        readable_size = format_size(data["size"])
 
         print(
             f"{category:<10} "
             f"{data['count']:>8} "
-            f"{size_mb:>12.2f}"
+            f"{readable_size:>12}"
         )
 
     print("=" * 40)
@@ -107,14 +120,30 @@ if folder.exists() and folder.is_dir():
 
     for category, data in stats.items():
         categories.append(category)
-        sizes_mb.append(data["size"] / (1024 * 1024))
+        sizes_mb.append(data["size"] / (1024 ** 2))
 
+    plt.figure()
     plt.bar(categories, sizes_mb)
-
     plt.title("File Size by Category")
     plt.xlabel("Category")
     plt.ylabel("Size (MB)")
+    plt.show()
 
+    pie_labels = []
+    pie_sizes = []
+
+    for category, data in stats.items():
+        if data["size"] > 0:
+            pie_labels.append(category)
+            pie_sizes.append(data["size"])
+
+    plt.figure()
+    plt.pie(
+        pie_sizes,
+        labels=pie_labels,
+        autopct="%1.1f%%"
+    )
+    plt.title("Storage Distribution by Category")
     plt.show()
 
 else:
