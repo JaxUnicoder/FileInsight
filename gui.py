@@ -1,11 +1,15 @@
 import sys
 from pathlib import Path
 
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QFileDialog,
@@ -26,7 +30,7 @@ class FileInsightWindow(QWidget):
         self.selected_folder = None
 
         self.setWindowTitle("FileInsight")
-        self.resize(700, 450)
+        self.resize(1100, 750)
 
         self.layout = QVBoxLayout()
 
@@ -42,8 +46,17 @@ class FileInsightWindow(QWidget):
         self.organize_button.setEnabled(False)
 
         self.stats_table = QTableWidget()
-
         self.setup_table()
+
+        self.bar_figure = Figure()
+        self.bar_canvas = FigureCanvas(self.bar_figure)
+
+        self.pie_figure = Figure()
+        self.pie_canvas = FigureCanvas(self.pie_figure)
+
+        self.chart_layout = QHBoxLayout()
+        self.chart_layout.addWidget(self.bar_canvas)
+        self.chart_layout.addWidget(self.pie_canvas)
 
         self.browse_button.clicked.connect(
             self.select_folder
@@ -58,6 +71,9 @@ class FileInsightWindow(QWidget):
         self.layout.addWidget(self.browse_button)
         self.layout.addWidget(self.organize_button)
         self.layout.addWidget(self.stats_table)
+
+        self.layout.addLayout(self.chart_layout)
+
         self.layout.addWidget(self.status_label)
 
         self.setLayout(self.layout)
@@ -121,6 +137,7 @@ class FileInsightWindow(QWidget):
         )
 
         self.update_stats_table(stats)
+        self.update_charts(stats)
 
         self.status_label.setText(
             f"Status: Done - {output_root}"
@@ -177,6 +194,68 @@ class FileInsightWindow(QWidget):
             )
 
             row += 1
+
+    def update_charts(self, stats):
+        categories = []
+        sizes_mb = []
+
+        for category, data in stats.items():
+            categories.append(category)
+            sizes_mb.append(
+                data["size"] / (1024 ** 2)
+            )
+
+        self.bar_figure.clear()
+
+        bar_axes = self.bar_figure.add_subplot(111)
+
+        bar_axes.bar(
+            categories,
+            sizes_mb
+        )
+
+        bar_axes.set_title(
+            "File Size by Category"
+        )
+
+        bar_axes.set_xlabel(
+            "Category"
+        )
+
+        bar_axes.set_ylabel(
+            "Size (MB)"
+        )
+
+        self.bar_figure.tight_layout()
+
+        self.bar_canvas.draw()
+
+        pie_labels = []
+        pie_sizes = []
+
+        for category, data in stats.items():
+            if data["size"] > 0:
+                pie_labels.append(category)
+                pie_sizes.append(data["size"])
+
+        self.pie_figure.clear()
+
+        pie_axes = self.pie_figure.add_subplot(111)
+
+        if pie_sizes:
+            pie_axes.pie(
+                pie_sizes,
+                labels=pie_labels,
+                autopct="%1.1f%%"
+            )
+
+        pie_axes.set_title(
+            "Storage Distribution"
+        )
+
+        self.pie_figure.tight_layout()
+
+        self.pie_canvas.draw()
 
 
 app = QApplication(sys.argv)
