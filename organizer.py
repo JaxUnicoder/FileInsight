@@ -1,6 +1,3 @@
-# organizer.py
-
-from pathlib import Path
 from shutil import copy2
 
 
@@ -10,6 +7,26 @@ rules = {
     "VIDEOS": [".mp4", ".mkv", ".mov"],
     "FILES": [".pdf", ".docx", ".txt"]
 }
+
+
+def get_category(file_path):
+    suffix = file_path.suffix.lower()
+
+    for category_name, extensions in rules.items():
+        if suffix in extensions:
+            return category_name
+
+    return "OTHERS"
+
+
+def create_empty_stats():
+    return {
+        "IMGS": {"count": 0, "size": 0},
+        "MUSICS": {"count": 0, "size": 0},
+        "VIDEOS": {"count": 0, "size": 0},
+        "FILES": {"count": 0, "size": 0},
+        "OTHERS": {"count": 0, "size": 0}
+    }
 
 
 def get_unique_path(target_dir, file_name):
@@ -33,31 +50,32 @@ def get_unique_path(target_dir, file_name):
         index += 1
 
 
-def organize_files(folder):
-    output_root = folder.parent / f"{folder.name}_organized"
-
-    stats = {
-        "IMGS": {"count": 0, "size": 0},
-        "MUSICS": {"count": 0, "size": 0},
-        "VIDEOS": {"count": 0, "size": 0},
-        "FILES": {"count": 0, "size": 0},
-        "OTHERS": {"count": 0, "size": 0}
-    }
+def analyze_folder(folder):
+    stats = create_empty_stats()
 
     for item in folder.rglob("*"):
         if item.is_file():
-            suffix = item.suffix.lower()
-            category = "OTHERS"
+            category = get_category(item)
 
-            for category_name, extensions in rules.items():
-                if suffix in extensions:
-                    category = category_name
-                    break
+            stats[category]["count"] += 1
+            stats[category]["size"] += item.stat().st_size
+
+    return stats
+
+
+def organize_files(folder):
+    output_root = folder.parent / f"{folder.name}_organized"
+    stats = create_empty_stats()
+
+    for item in folder.rglob("*"):
+        if item.is_file():
+            category = get_category(item)
 
             stats[category]["count"] += 1
             stats[category]["size"] += item.stat().st_size
 
             target_dir = output_root / category
+
             target_dir.mkdir(
                 parents=True,
                 exist_ok=True
