@@ -472,10 +472,18 @@ class FileInsightWindow(QWidget):
         )
 
         if pie_sizes:
-            pie_axes.pie(
+            wedges, texts, autotexts = pie_axes.pie(
                 pie_sizes,
-                labels=pie_labels,
-                autopct="%1.1f%%"
+                autopct="%1.1f%%",
+                startangle=90
+            )
+
+            pie_axes.legend(
+                wedges,
+                pie_labels,
+                title="Categories",
+                loc="center left",
+                bbox_to_anchor=(0.92, 0.5)
             )
 
         pie_axes.set_title(
