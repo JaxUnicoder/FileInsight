@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from organizer import analyze_folder, organize_files
 from file_stats import format_size
+from settings import load_settings, save_settings
 
 
 class FileInsightWindow(QWidget):
@@ -29,8 +30,60 @@ class FileInsightWindow(QWidget):
 
         self.selected_folder = None
 
+        self.settings = load_settings()
+
+        self.path_label = QLabel(
+            "No folder selected"
+        )
+
+        last_folder = self.settings.get(
+            "last_folder",
+            ""
+        )
+
+        if last_folder:
+            folder = Path(
+                last_folder
+            )
+
+            if folder.exists():
+                self.selected_folder = folder
+
+                self.path_label.setText(
+                    f"Folder: {self.selected_folder}"
+                )
+
         self.setWindowTitle("FileInsight")
-        self.resize(1100, 750)
+
+        window_width = self.settings.get(
+            "window_width",
+            1100
+        )
+
+        window_height = self.settings.get(
+            "window_height",
+            750
+        )
+
+        window_x = self.settings.get(
+            "window_x",
+            100
+        )
+
+        window_y = self.settings.get(
+            "window_y",
+            100
+        )
+
+        self.resize(
+            window_width,
+            window_height
+        )
+
+        self.move(
+            window_x,
+            window_y
+        )
 
         self.m_layout = QVBoxLayout()
 
@@ -49,9 +102,6 @@ class FileInsightWindow(QWidget):
             "FileInsight"
         )
 
-        self.path_label = QLabel(
-            "No folder selected"
-        )
 
         self.status_label = QLabel(
             "Status: Ready"
@@ -95,12 +145,14 @@ class FileInsightWindow(QWidget):
             "Organize Files"
         )
 
+        has_folder = self.selected_folder is not None
+
         self.analyze_button.setEnabled(
-            False
+            has_folder
         )
 
         self.organize_button.setEnabled(
-            False
+            has_folder
         )
 
         self.button_layout = QHBoxLayout()
@@ -207,6 +259,19 @@ class FileInsightWindow(QWidget):
             self.m_layout
         )
 
+    def closeEvent(self, event):
+        self.settings["window_width"] = self.width()
+        self.settings["window_height"] = self.height()
+
+        self.settings["window_x"] = self.x()
+        self.settings["window_y"] = self.y()
+
+        save_settings(
+            self.settings
+        )
+
+        event.accept()
+
     def setup_table(self):
         self.stats_table.setColumnCount(
             3
@@ -251,6 +316,12 @@ class FileInsightWindow(QWidget):
         if folder_path:
             self.selected_folder = Path(
                 folder_path
+            )
+
+            self.settings["last_folder"] = folder_path
+
+            save_settings(
+                self.settings
             )
 
             self.path_label.setText(
