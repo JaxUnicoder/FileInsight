@@ -63,35 +63,64 @@ def analyze_folder(folder):
     return stats
 
 
-def organize_files(folder):
+def organize_files(
+    folder,
+    progress_callback=None,
+    cancel_check=None
+):
     output_root = folder.parent / f"{folder.name}_organized"
     stats = create_empty_stats()
 
-    for item in folder.rglob("*"):
-        if item.is_file():
-            category = get_category(item)
+    files = [
+        item
+        for item in folder.rglob("*")
+        if item.is_file()
+    ]
 
-            stats[category]["count"] += 1
-            stats[category]["size"] += item.stat().st_size
+    total_files = len(files)
 
-            target_dir = output_root / category
+    for index, item in enumerate(files):
 
-            target_dir.mkdir(
-                parents=True,
-                exist_ok=True
+        if cancel_check and cancel_check():
+            break
+
+        category = get_category(item)
+
+        stats[category]["count"] += 1
+        stats[category]["size"] += item.stat().st_size
+
+        target_dir = output_root / category
+
+        target_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        target_path = get_unique_path(
+            target_dir,
+            item.name
+        )
+
+        copy2(
+            item,
+            target_path
+        )
+
+        print(
+            f"{item.name} -> "
+            f"{category} -> "
+            f"{target_path.name}"
+        )
+
+        if progress_callback and total_files > 0:
+            progress = int(
+                (index + 1)
+                / total_files
+                * 100
             )
 
-            target_path = get_unique_path(
-                target_dir,
-                item.name
-            )
-
-            copy2(item, target_path)
-
-            print(
-                f"{item.name} -> "
-                f"{category} -> "
-                f"{target_path.name}"
+            progress_callback(
+                progress
             )
 
     return stats, output_root

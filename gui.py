@@ -4,7 +4,15 @@ from pathlib import Path
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from PySide6.QtCore import Qt
+from threading import Event
+
+from PySide6.QtCore import (
+    Qt,
+    QObject,
+    QThread,
+    Signal
+)
+
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -16,19 +24,69 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
-    QAbstractItemView
+    QAbstractItemView,
+    QProgressBar,
 )
 
 from organizer import analyze_folder, organize_files
 from file_stats import format_size
 from settings import load_settings, save_settings
 
+class OrganizeWorker(QObject):
+
+    progress = Signal(int)
+
+    finished = Signal(
+        object,
+        object
+    )
+
+    cancelled = Signal()
+
+    error = Signal(str)
+
+    def __init__(
+        self,
+        folder
+    ):
+        super().__init__()
+
+        self.folder = folder
+
+        self.cancel_event = Event()
+
+    def run(self):
+        try:
+            stats, output_root = organize_files(
+                self.folder,
+                progress_callback=self.progress.emit,
+                cancel_check=self.cancel_event.is_set
+            )
+
+            if self.cancel_event.is_set():
+                self.cancelled.emit()
+
+            else:
+                self.finished.emit(
+                    stats,
+                    output_root
+                )
+
+        except Exception as e:
+            self.error.emit(
+                str(e)
+            )
+
+    def cancel(self):
+        self.cancel_event.set()
 
 class FileInsightWindow(QWidget):
     def __init__(self):
         super().__init__()
 
         self.selected_folder = None
+        self.thread = None
+        self.worker = None
 
         self.settings = load_settings()
 
@@ -145,6 +203,14 @@ class FileInsightWindow(QWidget):
             "Organize Files"
         )
 
+        self.cancel_button = QPushButton(
+            "Cancel"
+        )
+
+        self.cancel_button.setEnabled(
+            False
+        )
+
         has_folder = self.selected_folder is not None
 
         self.analyze_button.setEnabled(
@@ -155,6 +221,24 @@ class FileInsightWindow(QWidget):
             has_folder
         )
 
+        #region Progress Bar
+        self.progress_bar = QProgressBar()
+
+        self.progress_bar.setRange(
+            0,
+            100
+        )
+
+        self.progress_bar.setValue(
+            0
+        )
+
+        self.progress_bar.setVisible(
+            False
+        )
+        #endregion
+
+        #region Layouts
         self.button_layout = QHBoxLayout()
 
         self.button_layout.setSpacing(
@@ -167,6 +251,10 @@ class FileInsightWindow(QWidget):
 
         self.button_layout.addWidget(
             self.organize_button
+        )
+
+        self.button_layout.addWidget(
+            self.cancel_button
         )
 
         self.stats_table = QTableWidget()
@@ -211,18 +299,6 @@ class FileInsightWindow(QWidget):
             False
         )
 
-        self.browse_button.clicked.connect(
-            self.select_folder
-        )
-
-        self.analyze_button.clicked.connect(
-            self.analyze_selected_folder
-        )
-
-        self.organize_button.clicked.connect(
-            self.organize_selected_folder
-        )
-
         self.m_layout.addWidget(
             self.title_label
         )
@@ -237,6 +313,10 @@ class FileInsightWindow(QWidget):
 
         self.m_layout.addLayout(
             self.button_layout
+        )
+
+        self.m_layout.addWidget(
+            self.progress_bar
         )
 
         self.m_layout.addWidget(
@@ -258,6 +338,25 @@ class FileInsightWindow(QWidget):
         self.setLayout(
             self.m_layout
         )
+        #endregion
+
+        #region Connections
+        self.browse_button.clicked.connect(
+            self.select_folder
+        )
+
+        self.analyze_button.clicked.connect(
+            self.analyze_selected_folder
+        )
+
+        self.organize_button.clicked.connect(
+            self.organize_selected_folder
+        )
+
+        self.cancel_button.clicked.connect(
+            self.cancel_organize
+        )
+        #endregion
 
     def closeEvent(self, event):
         self.settings["window_width"] = self.width()
@@ -394,10 +493,123 @@ class FileInsightWindow(QWidget):
             "Status: Organizing..."
         )
 
-        stats, output_root = organize_files(
+        self.progress_bar.setValue(
+            0
+        )
+
+        self.progress_bar.setVisible(
+            True
+        )
+
+        self.cancel_button.setEnabled(
+            True
+        )
+
+        self.organize_button.setEnabled(
+            False
+        )
+
+        self.analyze_button.setEnabled(
+            False
+        )
+
+        self.browse_button.setEnabled(
+            False
+        )
+
+        self.thread = QThread()
+
+        self.worker = OrganizeWorker(
             self.selected_folder
         )
 
+        self.worker.moveToThread(
+            self.thread
+        )
+
+        self.thread.started.connect(
+            self.worker.run
+        )
+
+        self.worker.progress.connect(
+            self.progress_bar.setValue
+        )
+
+        self.worker.finished.connect(
+            self.organize_finished
+        )
+
+        self.worker.cancelled.connect(
+            self.organize_cancelled
+        )
+
+        self.worker.error.connect(
+            self.organize_error
+        )
+
+        # 任务结束 → 停止线程
+        self.worker.finished.connect(
+            self.thread.quit
+        )
+
+        self.worker.cancelled.connect(
+            self.thread.quit
+        )
+
+        self.worker.error.connect(
+            self.thread.quit
+        )
+
+        # 清理 worker
+        self.worker.finished.connect(
+            self.worker.deleteLater
+        )
+
+        self.worker.cancelled.connect(
+            self.worker.deleteLater
+        )
+
+        self.worker.error.connect(
+            self.worker.deleteLater
+        )
+
+        # 清理 thread
+        self.thread.finished.connect(
+            self.thread.deleteLater
+        )
+
+        self.thread.finished.connect(
+            self.organize_thread_finished
+        )
+
+        # 最后才启动
+        self.thread.start()
+
+    def finish_organize_ui(self):
+        self.progress_bar.setVisible(
+            False
+        )
+        self.cancel_button.setEnabled(
+            False
+        )
+
+        self.organize_button.setEnabled(
+            True
+        )
+
+        self.analyze_button.setEnabled(
+            True
+        )
+
+        self.browse_button.setEnabled(
+            True
+        )
+
+    def organize_finished(
+        self,
+        stats,
+        output_root
+    ):
         self.update_stats_table(
             stats
         )
@@ -408,9 +620,50 @@ class FileInsightWindow(QWidget):
 
         self.show_statistics()
 
+        self.progress_bar.setValue(
+            100
+        )
+
         self.status_label.setText(
             f"Status: Done - {output_root}"
         )
+
+        self.finish_organize_ui()
+
+    def cancel_organize(self):
+        if self.worker is None:
+            return
+
+        self.status_label.setText(
+            "Status: Cancelling..."
+        )
+
+        self.cancel_button.setEnabled(
+            False
+        )
+
+        self.worker.cancel()
+
+    def organize_cancelled(self):
+        self.status_label.setText(
+            "Status: Cancelled"
+        )
+
+        self.finish_organize_ui()
+
+    def organize_error(
+        self,
+        message
+    ):
+        self.status_label.setText(
+            f"Status: Error - {message}"
+        )
+
+        self.finish_organize_ui()   
+
+    def organize_thread_finished(self):
+        self.thread = None
+        self.worker = None
 
     def show_statistics(self):
         self.empty_label.setVisible(
