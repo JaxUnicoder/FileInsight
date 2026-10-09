@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-
+from copy import deepcopy
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -26,11 +26,18 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QProgressBar,
+    QDialog,
+    QListWidget,
+    QDialogButtonBox,
+    QInputDialog,
+    QMessageBox,
 )
+
 
 from organizer import analyze_folder, organize_files
 from file_stats import format_size
 from settings import load_settings, save_settings
+from default_rules import DEFAULT_RULES
 
 class OrganizeWorker(QObject):
 
@@ -47,11 +54,13 @@ class OrganizeWorker(QObject):
 
     def __init__(
         self,
-        folder
+        folder,
+        rules
     ):
         super().__init__()
 
         self.folder = folder
+        self.rules = deepcopy(rules)
 
         self.cancel_event = Event()
 
@@ -59,6 +68,7 @@ class OrganizeWorker(QObject):
         try:
             stats, output_root = organize_files(
                 self.folder,
+                self.rules,
                 progress_callback=self.progress.emit,
                 cancel_check=self.cancel_event.is_set
             )
@@ -89,6 +99,13 @@ class FileInsightWindow(QWidget):
         self.worker = None
 
         self.settings = load_settings()
+
+        self.rules = deepcopy(
+            self.settings.get(
+                "rules",
+                DEFAULT_RULES
+            )
+        )
 
         self.path_label = QLabel(
             "No folder selected"
@@ -203,6 +220,10 @@ class FileInsightWindow(QWidget):
             "Organize Files"
         )
 
+        self.rules_button = QPushButton(
+            "Edit Rules"
+        )
+
         self.cancel_button = QPushButton(
             "Cancel"
         )
@@ -251,6 +272,10 @@ class FileInsightWindow(QWidget):
 
         self.button_layout.addWidget(
             self.organize_button
+        )
+
+        self.button_layout.addWidget(
+            self.rules_button
         )
 
         self.button_layout.addWidget(
@@ -351,6 +376,10 @@ class FileInsightWindow(QWidget):
 
         self.organize_button.clicked.connect(
             self.organize_selected_folder
+        )
+
+        self.rules_button.clicked.connect(
+            self.open_rules_editor
         )
 
         self.cancel_button.clicked.connect(
@@ -459,6 +488,51 @@ class FileInsightWindow(QWidget):
                 False
             )
 
+    def open_rules_editor(self):
+        # Prevent rule editing while organization is running.
+        if self.thread is not None:
+            return
+
+        dialog = RulesEditor(
+            self.rules,
+            self
+        )
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        # Prepare updated settings without changing the current settings.
+        updated_settings = deepcopy(self.settings)
+        updated_settings["rules"] = deepcopy(dialog.rules)
+
+        try:
+            save_settings(updated_settings)
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                str(error)
+            )
+            return
+
+        # Apply the settings to the window after saving succeeds.
+        self.settings = updated_settings
+        self.rules = deepcopy(dialog.rules)
+
+        # Hide statistics based on the old rules until the next analysis.
+        self.stats_table.setVisible(False)
+        self.bar_canvas.setVisible(False)
+        self.pie_canvas.setVisible(False)
+
+        self.empty_label.setVisible(True)
+        self.empty_label.setText(
+            "Rules saved. Click Analyze to refresh."
+        )
+
+        self.status_label.setText(
+            "Status: Rules saved"
+        )
+
     def analyze_selected_folder(self):
         if self.selected_folder is None:
             return
@@ -468,7 +542,9 @@ class FileInsightWindow(QWidget):
         )
 
         stats = analyze_folder(
-            self.selected_folder
+            self.selected_folder,
+            self.rules
+            
         )
 
         self.update_stats_table(
@@ -520,7 +596,8 @@ class FileInsightWindow(QWidget):
         self.thread = QThread()
 
         self.worker = OrganizeWorker(
-            self.selected_folder
+            self.selected_folder,
+            self.rules
         )
 
         self.worker.moveToThread(
@@ -547,7 +624,7 @@ class FileInsightWindow(QWidget):
             self.organize_error
         )
 
-        # 任务结束 → 停止线程
+        # Stop the thread when the task ends.
         self.worker.finished.connect(
             self.thread.quit
         )
@@ -560,7 +637,7 @@ class FileInsightWindow(QWidget):
             self.thread.quit
         )
 
-        # 清理 worker
+        # Clean up the worker.
         self.worker.finished.connect(
             self.worker.deleteLater
         )
@@ -573,7 +650,7 @@ class FileInsightWindow(QWidget):
             self.worker.deleteLater
         )
 
-        # 清理 thread
+        # Clean up the thread.
         self.thread.finished.connect(
             self.thread.deleteLater
         )
@@ -582,7 +659,7 @@ class FileInsightWindow(QWidget):
             self.organize_thread_finished
         )
 
-        # 最后才启动
+        # Start the thread after all connections are configured.
         self.thread.start()
 
     def finish_organize_ui(self):
@@ -818,6 +895,435 @@ class FileInsightWindow(QWidget):
 
         self.pie_canvas.draw()
 
+class RulesEditor(QDialog):
+    def __init__(self, rules, parent=None):
+        super().__init__(parent)
+
+        # Edit an independent copy of the main window rules.
+        self.rules = deepcopy(rules)
+
+        self.setWindowTitle("Rules Editor")
+        self.resize(600, 400)
+
+        self.category_list = QListWidget()
+        self.extension_list = QListWidget()
+
+        # Left column: categories.
+        category_layout = QVBoxLayout()
+        category_layout.addWidget(QLabel("Categories"))
+        category_layout.addWidget(self.category_list)
+        self.add_category_button = QPushButton(
+            "Add Category"
+        )
+
+        category_layout.addWidget(
+            self.add_category_button
+        )
+
+        self.add_category_button.clicked.connect(
+            self.add_category
+        )
+
+        self.delete_category_button = QPushButton(
+            "Delete Category"
+        )
+
+        category_layout.addWidget(
+            self.delete_category_button
+        )
+
+        self.delete_category_button.clicked.connect(
+            self.delete_category
+        )
+
+        self.rename_category_button = QPushButton(
+            "Rename Category"
+        )
+
+        category_layout.addWidget(
+            self.rename_category_button
+        )
+
+        self.rename_category_button.clicked.connect(
+            self.rename_category
+        )
+
+        # Right column: extensions.
+        extension_layout = QVBoxLayout()
+        extension_layout.addWidget(QLabel("Extensions"))
+        extension_layout.addWidget(self.extension_list)
+        self.add_extension_button = QPushButton(
+            "Add Extension"
+        )
+
+        extension_layout.addWidget(
+            self.add_extension_button
+        )
+
+        self.add_extension_button.clicked.connect(
+            self.add_extension
+        )
+
+        self.delete_extension_button = QPushButton(
+            "Delete Extension"
+        )
+
+        extension_layout.addWidget(
+            self.delete_extension_button
+        )
+
+        self.rename_extension_button = QPushButton(
+            "Rename Extension"
+        )
+
+        extension_layout.addWidget(
+            self.rename_extension_button
+        )
+
+        self.rename_extension_button.clicked.connect(
+            self.rename_extension
+        )
+
+        self.delete_extension_button.clicked.connect(
+            self.delete_extension
+        )
+
+
+        columns_layout = QHBoxLayout()
+        columns_layout.addLayout(category_layout)
+        columns_layout.addLayout(extension_layout)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.Save | QDialogButtonBox.Cancel
+        )
+
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+        self.reset_rules_button = QPushButton(
+            "Reset Default"
+        )
+
+        self.reset_rules_button.clicked.connect(
+            self.reset_rules
+        )
+
+        # Bottom row: reset on the left, Save and Cancel on the right.
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addWidget(self.reset_rules_button)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.buttons)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.addLayout(columns_layout)
+        main_layout.addLayout(bottom_layout)
+
+        # Update the extension list when the selected category changes.
+        self.category_list.currentTextChanged.connect(
+            self.show_extensions
+        )
+
+        self.category_list.addItems(
+            list(self.rules.keys())
+        )
+
+        if self.category_list.count() > 0:
+            self.category_list.setCurrentRow(0)
+
+    def show_extensions(self, category):
+        self.extension_list.clear()
+
+        self.extension_list.addItems(
+            self.rules.get(category, [])
+        )
+
+    def validate_category_name(self, name, original_name=None):
+        if not name:
+            QMessageBox.warning(
+                self,
+                "Invalid Category",
+                "Category name cannot be empty."
+            )
+            return False
+
+        reserved_names = {
+            "OTHERS", "CON", "PRN", "AUX", "NUL"
+        }
+
+        reserved_names.update(
+            f"{prefix}{number}"
+            for prefix in ("COM", "LPT")
+            for number in range(1, 10)
+        )
+
+        invalid_characters = '<>:"/\\|?*'
+
+        if (
+            name.endswith(".")
+            or any(char in invalid_characters for char in name)
+            or any(ord(char) < 32 for char in name)
+            or name.split(".")[0].upper() in reserved_names
+        ):
+            QMessageBox.warning(
+                self,
+                "Invalid Category",
+                "Use a valid folder name. OTHERS is reserved."
+            )
+            return False
+
+        if any(
+            existing != original_name
+            and existing.casefold() == name.casefold()
+            for existing in self.rules
+        ):
+            QMessageBox.warning(
+                self,
+                "Duplicate Category",
+                "This category already exists."
+            )
+            return False
+
+        return True
+
+    def validate_extension(self, extension):
+        invalid_characters = '<>:"/\\|?*.'
+
+        if (
+            not extension.startswith(".")
+            or len(extension) < 2
+            or any(
+                char in invalid_characters
+                or char.isspace()
+                or ord(char) < 32
+                for char in extension[1:]
+            )
+        ):
+            QMessageBox.warning(
+                self,
+                "Invalid Extension",
+                "Use a single extension such as .blend."
+            )
+            return False
+
+        for category, extensions in self.rules.items():
+            if extension in extensions:
+                QMessageBox.warning(
+                    self,
+                    "Duplicate Extension",
+                    f"{extension} already belongs to {category}."
+                )
+                return False
+
+        return True
+
+    def add_category(self):
+        name, accepted = QInputDialog.getText(
+            self,
+            "Add Category",
+            "Category name:"
+        )
+
+        if not accepted:
+            return
+
+        name = name.strip()
+
+        if not self.validate_category_name(name):
+            return
+
+        self.rules[name] = []
+        self.category_list.addItem(name)
+
+        self.category_list.setCurrentRow(
+            self.category_list.count() - 1
+        )
+
+    def delete_category(self):
+        item = self.category_list.currentItem()
+
+        if item is None:
+            return
+
+        category = item.text()
+
+        # Remove the category and its extensions from the rules copy.
+        del self.rules[category]
+
+        # Remove the corresponding row from the list.
+        row = self.category_list.row(item)
+        self.category_list.takeItem(row)
+
+        # Refresh extensions, including when the last category is removed.
+        current_item = self.category_list.currentItem()
+
+        self.show_extensions(
+            current_item.text() if current_item else ""
+        )
+
+    def rename_category(self):
+        item = self.category_list.currentItem()
+
+        if item is None:
+            return
+
+        old_name = item.text()
+
+        new_name, accepted = QInputDialog.getText(
+            self,
+            "Rename Category",
+            "Category name:",
+            text=old_name
+        )
+
+        if not accepted:
+            return
+
+        new_name = new_name.strip()
+
+        if not self.validate_category_name(
+            new_name,
+            original_name=old_name
+        ):
+            return
+
+        if new_name == old_name:
+            return
+
+        # Replace the category name while preserving extensions and category order.
+        self.rules = {
+            new_name if category == old_name else category: extensions
+            for category, extensions in self.rules.items()
+        }
+
+        item.setText(new_name)
+
+        self.show_extensions(new_name)
+
+    def rename_extension(self):
+        category_item = self.category_list.currentItem()
+        extension_item = self.extension_list.currentItem()
+
+        if category_item is None or extension_item is None:
+            return
+
+        category = category_item.text()
+        old_extension = extension_item.text()
+
+        new_extension, accepted = QInputDialog.getText(
+            self,
+            "Rename Extension",
+            "New extension:",
+            text=old_extension
+        )
+
+        if not accepted:
+            return
+
+        new_extension = new_extension.strip().lower()
+
+        if not new_extension:
+            return
+
+        if not new_extension.startswith("."):
+            new_extension = "." + new_extension
+
+        # Return without duplicate validation if the extension is unchanged.
+        if new_extension == old_extension:
+            return
+        
+        if not self.validate_extension(new_extension):
+            return
+
+        # Replace the extension in place to preserve list order.
+        extensions = self.rules[category]
+        index = extensions.index(old_extension)
+        extensions[index] = new_extension
+
+        self.show_extensions(category)
+        self.extension_list.setCurrentRow(index)
+
+    def add_extension(self):
+        category_item = self.category_list.currentItem()
+
+        if category_item is None:
+            QMessageBox.warning(
+                self,
+                "No Category",
+                "Select a category first."
+            )
+            return
+
+        category = category_item.text()
+
+        extension, accepted = QInputDialog.getText(
+            self,
+            "Add Extension",
+            "Extension (for example .blend):"
+        )
+
+        if not accepted:
+            return
+
+        extension = extension.strip().lower()
+
+        if not extension:
+            return
+
+        # Add a leading dot, converting blend to .blend.
+        if not extension.startswith("."):
+            extension = "." + extension
+
+        if not self.validate_extension(extension):
+            return  
+
+        self.rules[category].append(extension)
+
+        self.show_extensions(category)
+
+        self.extension_list.setCurrentRow(
+            self.extension_list.count() - 1
+        )
+
+    def delete_extension(self):
+        category_item = self.category_list.currentItem()
+        extension_item = self.extension_list.currentItem()
+
+        if category_item is None or extension_item is None:
+            return
+
+        category = category_item.text()
+        extension = extension_item.text()
+
+        # Remove the extension from the rules copy.
+        self.rules[category].remove(extension)
+
+        # Refresh the extension list.
+        self.show_extensions(category)
+
+    def reset_rules(self):
+        answer = QMessageBox.question(
+            self,
+            "Reset Default Rules",
+            "Replace all categories and extensions with factory defaults?\n"
+            "Click Save afterward to apply the changes.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if answer != QMessageBox.Yes:
+            return
+
+        self.rules = deepcopy(DEFAULT_RULES)
+
+        self.category_list.clear()
+        self.extension_list.clear()
+
+        self.category_list.addItems(
+            list(self.rules.keys())
+        )
+
+        if self.category_list.count() > 0:
+            self.category_list.setCurrentRow(0)
 
 app = QApplication(
     sys.argv

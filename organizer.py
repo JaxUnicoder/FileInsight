@@ -1,15 +1,10 @@
 from shutil import copy2
 
 
-rules = {
-    "IMGS": [".jpg", ".jpeg", ".png", ".webp"],
-    "MUSICS": [".mp3", ".wav", ".flac"],
-    "VIDEOS": [".mp4", ".mkv", ".mov"],
-    "FILES": [".pdf", ".docx", ".txt"]
-}
-
-
-def get_category(file_path):
+def get_category(
+    file_path,
+    rules
+):
     suffix = file_path.suffix.lower()
 
     for category_name, extensions in rules.items():
@@ -19,14 +14,23 @@ def get_category(file_path):
     return "OTHERS"
 
 
-def create_empty_stats():
-    return {
-        "IMGS": {"count": 0, "size": 0},
-        "MUSICS": {"count": 0, "size": 0},
-        "VIDEOS": {"count": 0, "size": 0},
-        "FILES": {"count": 0, "size": 0},
-        "OTHERS": {"count": 0, "size": 0}
+def create_empty_stats(
+    rules
+):
+    stats = {}
+
+    for category_name in rules:
+        stats[category_name] = {
+            "count": 0,
+            "size": 0
+        }
+
+    stats["OTHERS"] = {
+        "count": 0,
+        "size": 0
     }
+
+    return stats
 
 
 def get_unique_path(target_dir, file_name):
@@ -50,12 +54,21 @@ def get_unique_path(target_dir, file_name):
         index += 1
 
 
-def analyze_folder(folder):
-    stats = create_empty_stats()
+def analyze_folder(
+    folder,
+    rules
+):
+    stats = create_empty_stats(
+        rules
+    )
 
     for item in folder.rglob("*"):
         if item.is_file():
-            category = get_category(item)
+
+            category = get_category(
+                item,
+                rules
+            )
 
             stats[category]["count"] += 1
             stats[category]["size"] += item.stat().st_size
@@ -65,11 +78,14 @@ def analyze_folder(folder):
 
 def organize_files(
     folder,
+    rules,
     progress_callback=None,
     cancel_check=None
 ):
     output_root = folder.parent / f"{folder.name}_organized"
-    stats = create_empty_stats()
+    stats = create_empty_stats(
+        rules
+    )
 
     files = [
         item
@@ -84,7 +100,10 @@ def organize_files(
         if cancel_check and cancel_check():
             break
 
-        category = get_category(item)
+        category = get_category(
+            item,
+            rules
+        )
 
         stats[category]["count"] += 1
         stats[category]["size"] += item.stat().st_size

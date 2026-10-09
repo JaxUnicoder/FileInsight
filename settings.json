@@ -5,5 +5,28 @@
     "theme": "dark",
     "chart_type": "pie",
     "window_x": 0,
-    "window_y": -7
+    "window_y": -7,
+    "rules": {
+        "IMGS": [
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+        ],
+        "MUSICS": [
+            ".mp3",
+            ".wav",
+            ".flac"
+        ],
+        "VIDEOS": [
+            ".mp4",
+            ".mkv",
+            ".mov"
+        ],
+        "FILES": [
+            ".pdf",
+            ".docx",
+            ".txt"
+        ]
+    }
 }
