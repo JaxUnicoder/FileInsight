@@ -1,5 +1,22 @@
 from shutil import copy2
 
+def create_output_folder(folder):
+    base_name = f"{folder.name}_organized"
+    index = 0
+
+    while True:
+        if index == 0:
+            directory_name = base_name
+        else:
+            directory_name = f"{base_name} ({index})"
+
+        output_root = folder.parent / directory_name
+
+        try:
+            output_root.mkdir()
+            return output_root
+        except FileExistsError:
+            index += 1
 
 def get_category(
     file_path,
@@ -82,7 +99,7 @@ def organize_files(
     progress_callback=None,
     cancel_check=None
 ):
-    output_root = folder.parent / f"{folder.name}_organized"
+    output_root = create_output_folder(folder)
     stats = create_empty_stats(
         rules
     )

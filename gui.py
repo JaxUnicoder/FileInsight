@@ -13,6 +13,16 @@ from PySide6.QtCore import (
     Signal
 )
 
+from PySide6.QtCore import (
+    Qt,
+    QObject,
+    QThread,
+    Signal,
+    QUrl,
+)
+
+from PySide6.QtGui import QDesktopServices
+
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -95,8 +105,10 @@ class FileInsightWindow(QWidget):
         super().__init__()
 
         self.selected_folder = None
+        self.output_folder = None
         self.thread = None
         self.worker = None
+        self.close_pending = False
 
         self.settings = load_settings()
 
@@ -356,8 +368,30 @@ class FileInsightWindow(QWidget):
             self.chart_layout
         )
 
-        self.m_layout.addWidget(
+        self.open_output_button = QPushButton(
+            "Open Output Folder"
+        )
+
+        self.open_output_button.setEnabled(False)
+
+        self.open_output_button.clicked.connect(
+            self.open_output_folder
+        )
+
+        self.status_layout = QHBoxLayout()
+
+        self.status_layout.addWidget(
             self.status_label
+        )
+
+        self.status_layout.addStretch()
+
+        self.status_layout.addWidget(
+            self.open_output_button
+        )
+
+        self.m_layout.addLayout(
+            self.status_layout
         )
 
         self.setLayout(
@@ -388,15 +422,60 @@ class FileInsightWindow(QWidget):
         #endregion
 
     def closeEvent(self, event):
+        if self.thread is not None:
+            # Keep the window alive until thread cleanup finishes.
+            event.ignore()
+
+            if self.close_pending:
+                return
+
+            answer = QMessageBox.question(
+                self,
+                "Cancel and Exit",
+                "Cancel organizing and exit?\n"
+                "Files already copied will be kept.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+
+            if answer != QMessageBox.Yes:
+                return
+
+            self.close_pending = True
+            self.setEnabled(False)
+
+            self.status_label.setText(
+                "Status: Waiting for the task to finish before closing..."
+            )
+
+            # The task may have finished while the prompt was open.
+            if self.thread is None:
+                self.close()
+                return
+
+            if self.worker is not None:
+                self.worker.cancel_event.set()
+
+            return
+
         self.settings["window_width"] = self.width()
         self.settings["window_height"] = self.height()
-
         self.settings["window_x"] = self.x()
         self.settings["window_y"] = self.y()
 
-        save_settings(
-            self.settings
-        )
+        try:
+            save_settings(self.settings)
+        except OSError as error:
+            event.ignore()
+            self.close_pending = False
+            self.setEnabled(True)
+
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                str(error)
+            )
+            return
 
         event.accept()
 
@@ -565,6 +644,27 @@ class FileInsightWindow(QWidget):
         if self.selected_folder is None:
             return
 
+        if self.thread is not None:
+            return
+
+        output_root = (
+            self.selected_folder.parent
+            / f"{self.selected_folder.name}_organized"
+        )
+
+        if output_root.exists():
+            answer = QMessageBox.question(
+                self,
+                "Output Folder Already Exists",
+                f"An output folder already exists:\n{output_root}\n\n"
+                "Continue organizing into a new numbered folder?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+
+            if answer != QMessageBox.Yes:
+                return
+            
         self.status_label.setText(
             "Status: Organizing..."
         )
@@ -687,6 +787,11 @@ class FileInsightWindow(QWidget):
         stats,
         output_root
     ):
+        self.output_folder = Path(output_root)
+
+        self.open_output_button.setEnabled(
+            self.output_folder.is_dir()
+        )
         self.update_stats_table(
             stats
         )
@@ -706,6 +811,32 @@ class FileInsightWindow(QWidget):
         )
 
         self.finish_organize_ui()
+
+    def open_output_folder(self):
+        if self.output_folder is None:
+            return
+
+        if not self.output_folder.is_dir():
+            QMessageBox.warning(
+                self,
+                "Folder Not Found",
+                "The output folder no longer exists."
+            )
+            self.open_output_button.setEnabled(False)
+            return
+
+        opened = QDesktopServices.openUrl(
+            QUrl.fromLocalFile(
+                str(self.output_folder.resolve())
+            )
+        )
+
+        if not opened:
+            QMessageBox.warning(
+                self,
+                "Open Failed",
+                "Could not open the output folder."
+            )
 
     def cancel_organize(self):
         if self.worker is None:
@@ -741,6 +872,9 @@ class FileInsightWindow(QWidget):
     def organize_thread_finished(self):
         self.thread = None
         self.worker = None
+
+        if self.close_pending:
+            self.close()
 
     def show_statistics(self):
         self.empty_label.setVisible(
